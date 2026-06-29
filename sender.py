@@ -45,6 +45,7 @@ class SenderApp(ctk.CTk):
         self.is_running = False
         self.is_paused = False
         self._proc = None
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
 
     def _build_ui(self):
@@ -541,6 +542,16 @@ class SenderApp(ctk.CTk):
                 self.after(0, self._finish_send)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _kill_proc(self):
+        if self._proc:
+            try: self._proc.kill()
+            except: pass
+            self._proc = None
+
+    def _on_close(self):
+        self._kill_proc()
+        self.destroy()
 
     def _finish_send(self):
         self.is_running = False
