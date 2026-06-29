@@ -150,7 +150,7 @@ class SenderApp(ctk.CTk):
         self.log_box.configure(state="disabled")
 
     def _mac_names(self):
-        n = [f"{m['name']}  ({m['ip']})" for m in self.cfg["macs"]]
+        n = [f"{m['name']}  ({self._mac_host(m)})" for m in self.cfg["macs"]]
         return n if n else ["-- chưa có máy --"]
 
     def _get_mac(self):
@@ -253,14 +253,19 @@ class SenderApp(ctk.CTk):
                     ["avahi-browse", "-t", "-r", "_ssh._tcp"],
                     capture_output=True, text=True, timeout=15)
                 found = {}
+                in_ipv6 = False
                 cur = {}
                 for line in r.stdout.splitlines():
                     if line.startswith("="):
-                        if "IPv6" in line: continue
+                        in_ipv6 = "IPv6" in line
+                        cur = {}
+                        if in_ipv6: continue
                         cur = {"display": re.sub(r'\s+', ' ', line.split("IPv4")[-1].split("SSH")[0].strip())}
-                    elif "hostname" in line:
+                    elif in_ipv6:
+                        continue
+                    elif "hostname" in line and "[" in line:
                         cur["host"] = line.split("[")[1].rstrip("]").strip()
-                    elif "address" in line:
+                    elif "address" in line and "[" in line:
                         cur["ip"] = line.split("[")[1].rstrip("]").strip()
                         if cur.get("host") and cur["host"] not in found:
                             found[cur["host"]] = dict(cur)
@@ -328,7 +333,7 @@ class SenderApp(ctk.CTk):
         win.configure(fg_color=BG)
         win.attributes("-topmost", True)
         fields = {}
-        for label, key in [("Tên hiển thị","name"),("IP","ip"),("Username","user"),("Password","pass")]:
+        for label, key in [("Tên hiển thị","name"),("Hostname (vd: editor2.local)","host"),("Username","user"),("Password","pass")]:
             ctk.CTkLabel(win, text=label, font=("Consolas", 11),
                          text_color=ACCENT).pack(anchor="w", padx=20, pady=(8,0))
             e = ctk.CTkEntry(win, font=("Consolas", 11), width=300,
@@ -354,12 +359,12 @@ class SenderApp(ctk.CTk):
         win.configure(fg_color=BG)
         win.attributes("-topmost", True)
         fields = {}
-        for label, key in [("Tên hiển thị","name"),("IP","ip"),("Username","user"),("Password","pass")]:
+        for label, key in [("Tên hiển thị","name"),("Hostname (vd: editor2.local)","host"),("Username","user"),("Password","pass")]:
             ctk.CTkLabel(win, text=label, font=("Consolas", 11),
                          text_color=ACCENT).pack(anchor="w", padx=20, pady=(8,0))
             e = ctk.CTkEntry(win, font=("Consolas", 11), width=300,
                              fg_color=BG3, show="*" if key=="pass" else "")
-            e.insert(0, mac[key])
+            e.insert(0, mac.get(key, mac.get("ip","") if key=="host" else ""))
             e.pack(padx=20); fields[key] = e
         def save():
             updated = {k: v.get().strip() for k,v in fields.items()}
