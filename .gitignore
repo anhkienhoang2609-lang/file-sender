@@ -1,0 +1,6 @@
+sender_config.json
+__pycache__/
+*.pyc
+build/
+dist/
+venv/
