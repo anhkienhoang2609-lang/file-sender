@@ -287,10 +287,13 @@ class SenderApp(ctk.CTk):
                      text_color=ACCENT).pack(pady=(15,5))
         frame = ctk.CTkScrollableFrame(win, height=200, fg_color=BG2)
         frame.pack(fill="both", expand=True, padx=15, pady=5)
+        existing_hosts = {m.get("host"): m for m in self.cfg["macs"] if m.get("host")}
+        saved_pass = next((m.get("pass","") for m in self.cfg["macs"] if m.get("pass")), "")
         checks = {}
         for host, info in found.items():
-            var = tk.BooleanVar(value=True)
-            lbl = f"{info['display']}  ({host})"
+            already = host in existing_hosts
+            var = tk.BooleanVar(value=False)
+            lbl = f"{info['display']}  ({host})" + ("  ✓" if already else "")
             ctk.CTkCheckBox(frame, text=lbl, variable=var,
                             font=("Consolas", 11)).pack(anchor="w", pady=3)
             checks[host] = (var, info)
@@ -304,6 +307,7 @@ class SenderApp(ctk.CTk):
                      text_color=GRAY).pack(side="left", padx=(12,0))
         pass_entry = ctk.CTkEntry(cred_frame, width=120, font=("Consolas", 11),
                                    fg_color=BG3, show="*")
+        pass_entry.insert(0, saved_pass)
         pass_entry.pack(side="left", padx=(8,0))
 
         def add_selected():
@@ -314,13 +318,13 @@ class SenderApp(ctk.CTk):
             added = 0
             for host, (var, info) in checks.items():
                 if not var.get(): continue
-                existing = [m for m in self.cfg["macs"] if m.get("host") == host or m.get("ip") == info.get("ip")]
+                existing = existing_hosts.get(host)
                 if existing:
-                    existing[0].update({"host": host, "ip": info.get("ip",""), "user": usr, "pass": pw or existing[0].get("pass","")})
+                    existing.update({"user": usr or existing.get("user",""), "pass": pw or existing.get("pass","")})
                 else:
                     self.cfg["macs"].append({
                         "name": info["display"], "host": host,
-                        "ip": info.get("ip",""), "user": usr, "pass": pw
+                        "user": usr, "pass": pw
                     })
                 added += 1
             save_config(self.cfg)
