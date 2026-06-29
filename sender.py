@@ -177,17 +177,20 @@ class SenderApp(ctk.CTk):
 
     def _toggle_pause(self):
         if not self._proc or not self.is_running: return
-        import signal
-        if not self.is_paused:
-            self._proc.send_signal(signal.SIGSTOP)
-            self.is_paused = True
-            self.btn_pause.configure(text="▶")
-            self._status("⏸ Tạm dừng")
-        else:
-            self._proc.send_signal(signal.SIGCONT)
-            self.is_paused = False
-            self.btn_pause.configure(text="⏸")
-            self._status("Đang gửi...")
+        import signal, os as _os
+        try:
+            pgid = _os.getpgid(self._proc.pid)
+            if not self.is_paused:
+                _os.killpg(pgid, signal.SIGSTOP)
+                self.is_paused = True
+                self.btn_pause.configure(text="▶")
+                self._status("⏸ Tạm dừng")
+            else:
+                _os.killpg(pgid, signal.SIGCONT)
+                self.is_paused = False
+                self.btn_pause.configure(text="⏸")
+                self._status("Đang gửi...")
+        except Exception: pass
 
     def _lock_ui(self, locked):
         state = "disabled" if locked else "normal"
@@ -231,8 +234,9 @@ class SenderApp(ctk.CTk):
                 else:
                     self.after(0, lambda: self._status("Không tìm thấy ổ"))
             except subprocess.TimeoutExpired:
-                self.after(0, lambda ip=mac['ip']: self._status(f"❌ Timeout — không kết nối được {ip}"))
-                self.after(0, lambda ip=mac['ip']: self._log(f"❌ Timeout kết nối {ip} — kiểm tra IP hoặc máy đã bật chưa"))
+                host = self._mac_host(mac)
+                self.after(0, lambda h=host: self._status(f"❌ Timeout — không kết nối được {h}"))
+                self.after(0, lambda h=host: self._log(f"❌ Timeout kết nối {h} — máy đã bật chưa?"))
             except Exception as e:
                 self.after(0, lambda err=str(e): self._status(f"❌ Lỗi: {err}"))
         threading.Thread(target=w, daemon=True).start()
@@ -412,7 +416,7 @@ class SenderApp(ctk.CTk):
                 if m["name"] == mac["name"]: m.update(updated)
             save_config(self.cfg)
             self.mac_dropdown.configure(values=self._mac_names())
-            self.selected_mac.set(f"{updated['name']}  ({updated['ip']})")
+            self.selected_mac.set(f"{updated['name']}  ({self._mac_host(updated)})")
             self._status(f"Đã cập nhật: {updated['name']}"); win.destroy()
         ctk.CTkButton(win, text="Lưu", command=save,
                       fg_color=BLUE, hover_color="#1565C0").pack(pady=15)
@@ -439,6 +443,8 @@ class SenderApp(ctk.CTk):
             self._status("Chọn folder nguồn hợp lệ"); return
         if not mac:
             self._status("Chưa chọn Mac"); return
+        if not mac.get("user","").strip():
+            self._status("❌ Chưa có username — vào Sửa để điền"); return
         if not vol or vol.startswith("--"):
             self._status("Chưa chọn ổ"); return
 
@@ -464,8 +470,8 @@ class SenderApp(ctk.CTk):
                 ]
 
                 proc = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, bufsize=1, start_new_session=True
                 )
                 self._proc = proc
 
@@ -531,9 +537,11 @@ class SenderApp(ctk.CTk):
                     self.after(0, lambda s=success, t=total_files, e=elapsed_str:
                                self._log(f"\n🏁 Xong: {s}/{t} file — {e}"))
                 else:
+                    err_out = proc.stderr.read().strip().split("\n")[0] if proc.stderr else ""
+                    err_msg = err_out or f"rsync exit {proc.returncode}"
                     self.after(0, lambda: self.eta_label.configure(text="❌ Thất bại"))
                     self.after(0, lambda: self._status("❌ Thất bại!"))
-                    self.after(0, lambda: self._log("❌ Thất bại!"))
+                    self.after(0, lambda e=err_msg: self._log(f"❌ Thất bại: {e}"))
             except Exception as e:
                 self.after(0, lambda: self._log(f"❌ Exception: {e}"))
                 self.after(0, lambda: self._status(f"Lỗi: {e}"))
