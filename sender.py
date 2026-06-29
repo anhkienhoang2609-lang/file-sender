@@ -280,7 +280,7 @@ class SenderApp(ctk.CTk):
     def _show_scan_results(self, found):
         win = ctk.CTkToplevel(self)
         win.title("Máy Mac tìm thấy")
-        win.geometry("420x380")
+        win.geometry("480x400")
         win.configure(fg_color=BG)
         win.attributes("-topmost", True)
         ctk.CTkLabel(win, text=f"Tìm thấy {len(found)} máy", font=("Consolas", 13, "bold"),
@@ -294,26 +294,33 @@ class SenderApp(ctk.CTk):
             ctk.CTkCheckBox(frame, text=lbl, variable=var,
                             font=("Consolas", 11)).pack(anchor="w", pady=3)
             checks[host] = (var, info)
-        pass_frame = ctk.CTkFrame(win, fg_color="transparent")
-        pass_frame.pack(fill="x", padx=15, pady=(5,0))
-        ctk.CTkLabel(pass_frame, text="Password SSH:", font=("Consolas", 11),
+        cred_frame = ctk.CTkFrame(win, fg_color="transparent")
+        cred_frame.pack(fill="x", padx=15, pady=(5,0))
+        ctk.CTkLabel(cred_frame, text="Username:", font=("Consolas", 11),
                      text_color=GRAY).pack(side="left")
-        pass_entry = ctk.CTkEntry(pass_frame, width=160, font=("Consolas", 11),
+        user_entry = ctk.CTkEntry(cred_frame, width=120, font=("Consolas", 11), fg_color=BG3)
+        user_entry.pack(side="left", padx=(8,0))
+        ctk.CTkLabel(cred_frame, text="Password:", font=("Consolas", 11),
+                     text_color=GRAY).pack(side="left", padx=(12,0))
+        pass_entry = ctk.CTkEntry(cred_frame, width=120, font=("Consolas", 11),
                                    fg_color=BG3, show="*")
         pass_entry.pack(side="left", padx=(8,0))
 
         def add_selected():
             pw = pass_entry.get().strip()
+            usr = user_entry.get().strip()
+            if not usr:
+                self._status("❌ Cần nhập username"); return
             added = 0
             for host, (var, info) in checks.items():
                 if not var.get(): continue
                 existing = [m for m in self.cfg["macs"] if m.get("host") == host or m.get("ip") == info.get("ip")]
                 if existing:
-                    existing[0].update({"host": host, "ip": info.get("ip",""), "pass": pw or existing[0].get("pass","")})
+                    existing[0].update({"host": host, "ip": info.get("ip",""), "user": usr, "pass": pw or existing[0].get("pass","")})
                 else:
                     self.cfg["macs"].append({
                         "name": info["display"], "host": host,
-                        "ip": info.get("ip",""), "user": "", "pass": pw
+                        "ip": info.get("ip",""), "user": usr, "pass": pw
                     })
                 added += 1
             save_config(self.cfg)
