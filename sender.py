@@ -77,11 +77,13 @@ class SenderApp(ctk.CTk):
                                                button_color="#333", button_hover_color="#555",
                                                command=self._on_mac_select)
         self.mac_dropdown.pack(side="left")
-        ctk.CTkButton(r2, text="+ Thêm", width=80, fg_color="#1a3a1a", hover_color="#2d6b2d",
-                      command=self._add_mac).pack(side="left", padx=(6,0))
-        ctk.CTkButton(r2, text="Sửa", width=60, fg_color="#1a2a3a", hover_color="#2d4a6b",
+        ctk.CTkButton(r2, text="🔍 Scan", width=80, fg_color="#1a3a2a", hover_color="#2d6b4a",
+                      command=self._scan_macs).pack(side="left", padx=(6,0))
+        ctk.CTkButton(r2, text="+ Thêm", width=75, fg_color="#1a3a1a", hover_color="#2d6b2d",
+                      command=self._add_mac).pack(side="left", padx=(4,0))
+        ctk.CTkButton(r2, text="Sửa", width=55, fg_color="#1a2a3a", hover_color="#2d4a6b",
                       command=self._edit_mac).pack(side="left", padx=(4,0))
-        ctk.CTkButton(r2, text="Xóa", width=60, fg_color="#3a1a1a", hover_color="#6b2d2d",
+        ctk.CTkButton(r2, text="Xóa", width=55, fg_color="#3a1a1a", hover_color="#6b2d2d",
                       command=self._del_mac).pack(side="left", padx=(4,0))
 
         # Volume
@@ -157,6 +159,9 @@ class SenderApp(ctk.CTk):
             if m["name"] in sel: return m
         return None
 
+    def _mac_host(self, mac):
+        return mac.get("host") or mac.get("ip", "")
+
     def _status(self, msg):
         self.status_label.configure(text=msg)
 
@@ -183,17 +188,25 @@ class SenderApp(ctk.CTk):
             try:
                 r = subprocess.run(
                     ["sshpass","-p",mac["pass"],"ssh","-o","StrictHostKeyChecking=no",
-                     f"{mac['user']}@{mac['ip']}","ls /Volumes/"],
-                    capture_output=True, text=True, timeout=10)
+                     "-o","ConnectTimeout=8",
+                     f"{mac['user']}@{self._mac_host(mac)}","ls /Volumes/"],
+                    capture_output=True, text=True, timeout=12)
                 vols = [v.strip() for v in r.stdout.strip().split("\n") if v.strip()]
                 if vols:
                     self.after(0, lambda v=vols: self.vol_dropdown.configure(values=v))
                     self.after(0, lambda v=vols: self.selected_vol.set(v[0]))
                     self.after(0, lambda v=vols: self._status("OK: " + ", ".join(v)))
+                elif r.returncode != 0:
+                    err = r.stderr.strip().split("\n")[0] if r.stderr.strip() else f"exit code {r.returncode}"
+                    self.after(0, lambda e=err: self._status(f"❌ SSH lỗi: {e}"))
+                    self.after(0, lambda e=err: self._log(f"❌ Detect thất bại: {e}"))
                 else:
                     self.after(0, lambda: self._status("Không tìm thấy ổ"))
+            except subprocess.TimeoutExpired:
+                self.after(0, lambda ip=mac['ip']: self._status(f"❌ Timeout — không kết nối được {ip}"))
+                self.after(0, lambda ip=mac['ip']: self._log(f"❌ Timeout kết nối {ip} — kiểm tra IP hoặc máy đã bật chưa"))
             except Exception as e:
-                self.after(0, lambda: self._status(f"Lỗi: {e}"))
+                self.after(0, lambda err=str(e): self._status(f"❌ Lỗi: {err}"))
         threading.Thread(target=w, daemon=True).start()
 
     def _browse_dst(self):
@@ -204,7 +217,7 @@ class SenderApp(ctk.CTk):
             try:
                 r = subprocess.run(
                     ["sshpass","-p",mac["pass"],"ssh","-o","StrictHostKeyChecking=no",
-                     f"{mac['user']}@{mac['ip']}", f"ls \"/Volumes/{vol}/\""],
+                     f"{mac['user']}@{self._mac_host(mac)}", f"ls \"/Volumes/{vol}/\""],
                     capture_output=True, text=True, timeout=10)
                 folders = [f.strip() for f in r.stdout.strip().split("\n") if f.strip()]
                 if folders: self.after(0, lambda: self._show_folder_picker(folders, vol))
@@ -229,6 +242,82 @@ class SenderApp(ctk.CTk):
         def confirm():
             self.selected_dst.set(sel_var.get()); win.destroy()
         ctk.CTkButton(win, text="Chọn", command=confirm,
+                      fg_color=BLUE, hover_color="#1565C0").pack(pady=10)
+
+    def _scan_macs(self):
+        if self.is_running: return
+        self._status("Đang scan mạng LAN...")
+        def w():
+            try:
+                r = subprocess.run(
+                    ["avahi-browse", "-t", "-r", "_ssh._tcp"],
+                    capture_output=True, text=True, timeout=15)
+                found = {}
+                cur = {}
+                for line in r.stdout.splitlines():
+                    if line.startswith("="):
+                        if "IPv6" in line: continue
+                        cur = {"display": re.sub(r'\s+', ' ', line.split("IPv4")[-1].split("SSH")[0].strip())}
+                    elif "hostname" in line:
+                        cur["host"] = line.split("[")[1].rstrip("]").strip()
+                    elif "address" in line:
+                        cur["ip"] = line.split("[")[1].rstrip("]").strip()
+                        if cur.get("host") and cur["host"] not in found:
+                            found[cur["host"]] = dict(cur)
+                if found:
+                    self.after(0, lambda f=found: self._show_scan_results(f))
+                else:
+                    self.after(0, lambda: self._status("Không tìm thấy Mac nào"))
+            except Exception as e:
+                self.after(0, lambda err=str(e): self._status(f"❌ Scan lỗi: {err}"))
+        threading.Thread(target=w, daemon=True).start()
+
+    def _show_scan_results(self, found):
+        win = ctk.CTkToplevel(self)
+        win.title("Máy Mac tìm thấy")
+        win.geometry("420x380")
+        win.configure(fg_color=BG)
+        win.attributes("-topmost", True)
+        ctk.CTkLabel(win, text=f"Tìm thấy {len(found)} máy", font=("Consolas", 13, "bold"),
+                     text_color=ACCENT).pack(pady=(15,5))
+        frame = ctk.CTkScrollableFrame(win, height=200, fg_color=BG2)
+        frame.pack(fill="both", expand=True, padx=15, pady=5)
+        checks = {}
+        for host, info in found.items():
+            var = tk.BooleanVar(value=True)
+            lbl = f"{info['display']}  ({host})"
+            ctk.CTkCheckBox(frame, text=lbl, variable=var,
+                            font=("Consolas", 11)).pack(anchor="w", pady=3)
+            checks[host] = (var, info)
+        pass_frame = ctk.CTkFrame(win, fg_color="transparent")
+        pass_frame.pack(fill="x", padx=15, pady=(5,0))
+        ctk.CTkLabel(pass_frame, text="Password SSH:", font=("Consolas", 11),
+                     text_color=GRAY).pack(side="left")
+        pass_entry = ctk.CTkEntry(pass_frame, width=160, font=("Consolas", 11),
+                                   fg_color=BG3, show="*")
+        pass_entry.pack(side="left", padx=(8,0))
+
+        def add_selected():
+            pw = pass_entry.get().strip()
+            added = 0
+            for host, (var, info) in checks.items():
+                if not var.get(): continue
+                existing = [m for m in self.cfg["macs"] if m.get("host") == host or m.get("ip") == info.get("ip")]
+                if existing:
+                    existing[0].update({"host": host, "ip": info.get("ip",""), "pass": pw or existing[0].get("pass","")})
+                else:
+                    self.cfg["macs"].append({
+                        "name": info["display"], "host": host,
+                        "ip": info.get("ip",""), "user": "", "pass": pw
+                    })
+                added += 1
+            save_config(self.cfg)
+            self.mac_dropdown.configure(values=self._mac_names())
+            self.selected_mac.set(self._mac_names()[0])
+            self._status(f"✅ Đã thêm {added} máy")
+            win.destroy()
+
+        ctk.CTkButton(win, text="Thêm đã chọn", command=add_selected,
                       fg_color=BLUE, hover_color="#1565C0").pack(pady=10)
 
     def _add_mac(self):
@@ -327,7 +416,7 @@ class SenderApp(ctk.CTk):
                     "rsync", "-av", "--progress",
                     "-e", "ssh -o StrictHostKeyChecking=no",
                     src + "/",
-                    f"{mac['user']}@{mac['ip']}:{dest_path}"
+                    f"{mac['user']}@{self._mac_host(mac)}:{dest_path}"
                 ]
 
                 proc = subprocess.Popen(
