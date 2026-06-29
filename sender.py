@@ -43,6 +43,8 @@ class SenderApp(ctk.CTk):
         self.selected_vol = tk.StringVar()
         self.selected_dst = tk.StringVar()
         self.is_running = False
+        self.is_paused = False
+        self._proc = None
         self._build_ui()
 
     def _build_ui(self):
@@ -112,12 +114,19 @@ class SenderApp(ctk.CTk):
         ctk.CTkButton(r4, text="Browse", width=70, command=self._browse_dst,
                       fg_color="#333", hover_color="#555").pack(side="left", padx=(6,0))
 
-        # Send button
-        self.btn_send = ctk.CTkButton(self, text="GỬI FILE", height=46,
+        # Send + Pause buttons
+        fb = ctk.CTkFrame(self, fg_color="transparent")
+        fb.pack(fill="x", padx=20, pady=(10,4))
+        self.btn_send = ctk.CTkButton(fb, text="GỬI FILE", height=46,
                                        font=("Consolas", 15, "bold"),
                                        fg_color=BLUE, hover_color="#1565C0",
                                        text_color="white", command=self._send)
-        self.btn_send.pack(fill="x", padx=20, pady=(10,4))
+        self.btn_send.pack(side="left", fill="x", expand=True)
+        self.btn_pause = ctk.CTkButton(fb, text="⏸", width=52, height=46,
+                                        font=("Consolas", 18),
+                                        fg_color="#555", hover_color="#777",
+                                        state="disabled", command=self._toggle_pause)
+        self.btn_pause.pack(side="left", padx=(6,0))
 
         # Progress
         fp = ctk.CTkFrame(self, fg_color="transparent")
@@ -165,8 +174,26 @@ class SenderApp(ctk.CTk):
     def _status(self, msg):
         self.status_label.configure(text=msg)
 
+    def _toggle_pause(self):
+        if not self._proc or not self.is_running: return
+        import signal
+        if not self.is_paused:
+            self._proc.send_signal(signal.SIGSTOP)
+            self.is_paused = True
+            self.btn_pause.configure(text="▶")
+            self._status("⏸ Tạm dừng")
+        else:
+            self._proc.send_signal(signal.SIGCONT)
+            self.is_paused = False
+            self.btn_pause.configure(text="⏸")
+            self._status("Đang gửi...")
+
     def _lock_ui(self, locked):
         state = "disabled" if locked else "normal"
+        self.btn_pause.configure(state="normal" if locked else "disabled")
+        if not locked:
+            self.is_paused = False
+            self.btn_pause.configure(text="⏸")
         for w in [self.src_entry, self.dst_entry, self.mac_dropdown, self.vol_dropdown]:
             w.configure(state=state)
 
@@ -431,7 +458,7 @@ class SenderApp(ctk.CTk):
                     "sshpass", "-p", mac["pass"],
                     "rsync", "-av", "--progress",
                     "-e", "ssh -o StrictHostKeyChecking=no",
-                    src + "/",
+                    src,
                     f"{mac['user']}@{self._mac_host(mac)}:{dest_path}"
                 ]
 
@@ -439,6 +466,7 @@ class SenderApp(ctk.CTk):
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1
                 )
+                self._proc = proc
 
                 buf = ""
                 start_time = _time.time()
@@ -509,6 +537,7 @@ class SenderApp(ctk.CTk):
                 self.after(0, lambda: self._log(f"❌ Exception: {e}"))
                 self.after(0, lambda: self._status(f"Lỗi: {e}"))
             finally:
+                self._proc = None
                 self.after(0, self._finish_send)
 
         threading.Thread(target=worker, daemon=True).start()
